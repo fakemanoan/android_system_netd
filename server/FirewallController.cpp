@@ -53,6 +53,10 @@ constexpr const uid_t kDefaultMaximumUid = UID_MAX - 1;  // UID_MAX defined as U
 // Proc file containing the uid mapping for the user namespace of the current process.
 const char kUidMapProcFile[] = "/proc/self/uid_map";
 
+bool getBpfOwnerStatus() {
+    return gCtls->trafficCtrl.getBpfEnabled();
+}
+
 }  // namespace
 
 namespace android {
@@ -90,10 +94,8 @@ FirewallController::FirewallController(void) : mMaxUid(discoverMaximumValidUid(k
 }
 
 int FirewallController::setupIptablesHooks(void) {
-    int res = flushRules();
-
-    // mUseBpfOwnerMatch should be removed, but it is still depended upon by test code.
-    mUseBpfOwnerMatch = true;
+    int res = 0;
+    mUseBpfOwnerMatch = getBpfOwnerStatus();
     if (mUseBpfOwnerMatch) {
         return res;
     }
@@ -127,22 +129,19 @@ int FirewallController::setFirewallType(FirewallType ftype) {
     return res ? -EREMOTEIO : 0;
 }
 
-int FirewallController::flushRules() {
-    std::string command =
-            "*filter\n"
-            ":fw_INPUT -\n"
-            ":fw_OUTPUT -\n"
-            ":fw_FORWARD -\n"
-            "-6 -A fw_OUTPUT ! -o lo -s ::1 -j DROP\n"
-            "COMMIT\n";
-
-    return (execIptablesRestore(V4V6, command.c_str()) == 0) ? 0 : -EREMOTEIO;
-}
-
 int FirewallController::resetFirewall(void) {
     mFirewallType = ALLOWLIST;
     mIfaceRules.clear();
-    return flushRules();
+
+    // flush any existing rules
+    std::string command =
+        "*filter\n"
+        ":fw_INPUT -\n"
+        ":fw_OUTPUT -\n"
+        ":fw_FORWARD -\n"
+        "COMMIT\n";
+
+    return (execIptablesRestore(V4V6, command.c_str()) == 0) ? 0 : -EREMOTEIO;
 }
 
 int FirewallController::enableChildChains(ChildChain chain, bool enable) {
